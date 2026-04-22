@@ -1,6 +1,6 @@
 # ESP32 / Pico Temperature Controller — MicroPython
 
-MicroPython temperature controller with PID auto-tuning and a Reinforcement Learning (Q-learning) variant.
+MicroPython temperature controller with PID auto-tuning, a Reinforcement Learning (Q-learning) variant, best-gains persistence, and a 3-button OLED menu UI.
 Works on **ESP32** and **Raspberry Pi Pico** (RP2040).
 
 ---
@@ -10,8 +10,10 @@ Works on **ESP32** and **Raspberry Pi Pico** (RP2040).
 | File | Board | Description |
 |---|---|---|
 | `esp32_pid_controller.py` | ESP32 | PID controller with auto-tuner — original version |
-| `pico_pid_controller.py` | Pico | Same PID controller ported to Pico |
+| `pico_pid_controller.py` | Pico | **v1** — PID controller ported to Pico, soft-PWM |
 | `pico_pid_v2_rl.py` | Pico | **v2** — Q-learning agent replaces PID |
+| `pico_pid_v3_smart.py` | Pico | **v3** — RUN / CALIBRATE modes, best-gains persistence, button reset |
+| `pico_pid_v4_menu.py` | Pico | **v4** — 3-button OLED menu UI for live parameter editing |
 | `display_oled.py` | Pico | SSD1306 128×64 OLED driver (self-contained, no extra library needed) |
 
 ---
@@ -67,9 +69,80 @@ The Q-table is **saved to flash** (`qtable_v2.json`) every 200 steps, so learnin
 
 ---
 
+### v3 — Smart PID with RUN / CALIBRATE modes (`pico_pid_v3_smart.py`)
+
+Adds persistent best-gains tracking and two operating modes switchable via a single button.
+
+**Modes:**
+
+| Mode | Tuner aggressiveness | Tuner interval | Purpose |
+|---|---|---|---|
+| RUN | Gentle (step ±0.03) | Every 60 s | Stable daily operation |
+| CALIBRATE | Aggressive (step ±0.10) | Every 20 s | Fast exploration of better gains |
+
+**How it works:**
+- A `PerformanceTracker` scores each tuning window: `score = MAE + 0.5 × oscillations/min` (lower is better)
+- When a new score beats the stored best, gains are saved to `pid_state.json` on flash
+- In RUN mode, if current score is >30% worse than the stored best, the best gains are automatically reloaded
+- CALIBRATE mode runs for up to 5 minutes (`CAL_DURATION_S`), then returns to RUN automatically
+
+**Button (GP17):**
+- Short press — toggle RUN ↔ CALIBRATE
+- Long press ≥ 3 s — factory reset (clears saved state, reloads defaults)
+
+**LED patterns:**
+- RUN — normal slow blink
+- CALIBRATE — double-blink pattern
+
+**Saved state (`pid_state.json`):**
+```json
+{"best_kp": 1.2, "best_ki": 0.04, "best_kd": 0.8, "best_score": 0.42, "mode": "RUN", "cal_count": 3}
+```
+
+---
+
+### v4 — OLED Menu UI (`pico_pid_v4_menu.py`)
+
+All v3 functionality plus a **3-button live menu** on the OLED display for editing parameters without reflashing.
+
+**Buttons:**
+
+| Button | Pin | Short press | Long press |
+|---|---|---|---|
+| SELECT | GP17 | Open menu / advance to next item | Save & exit menu (or factory reset outside menu) |
+| UP | GP18 | Increase selected value | — |
+| DOWN | GP19 | Decrease selected value | — |
+
+UP / DOWN auto-repeat when held.
+
+**Menu items:**
+
+| Item | Step | Description |
+|---|---|---|
+| MODE | — | Toggle RUN ↔ CALIBRATE |
+| TEMP | ±0.5 °C | Target temperature setpoint |
+| Kp | ±0.1 | Proportional gain |
+| Ki | ±0.005 | Integral gain |
+| Kd | ±0.1 | Derivative gain |
+
+**OLED layout while menu is open:**
+```
+[header: item name + value]   ← row 0
+[item 1]                       ← row 1
+[item 2]  ◄ highlighted        ← row 2  (white bg, black text)
+[item 3]                       ← row 3
+[item 4]                       ← row 4
+[item 5]                       ← row 5
+[HOLD SEL=SAVE / SEL=NEXT]    ← row 7 (hint)
+```
+
+LED is solid ON while the menu is open. All changes are applied immediately when saved.
+
+---
+
 ## Wiring
 
-### Pico (v1 and v2)
+### Pico (v1 / v2)
 
 ```
 NTC thermistor (high-side):
@@ -90,6 +163,21 @@ OLED display (SSD1306 I2C):
   GP14 ──── SDA
   GP15 ──── SCL
 ```
+
+### Pico (v3 / v4 — additional pins)
+
+```
+Button – SELECT (v3 mode toggle / v4 menu navigate):
+  GP17 ──── button ──── GND   (internal pull-up, active LOW)
+
+Button – UP (v4 only):
+  GP18 ──── button ──── GND
+
+Button – DOWN (v4 only):
+  GP19 ──── button ──── GND
+```
+
+All buttons connect directly between the GPIO pin and GND — no external resistor needed (internal pull-ups are enabled in software).
 
 ### ESP32
 
@@ -142,6 +230,21 @@ Use a series resistor matching your NTC value (10k with 10k NTC, 100k with 100k 
 3. First run will explore randomly — takes 15–30 minutes to build a useful policy
 4. Subsequent runs load `qtable_v2.json` from flash and exploit the learned policy
 
+### v3 Smart PID (Pico)
+1. Upload `pico_pid_v3_smart.py` (rename to `main.py`) and `display_oled.py`
+2. Set `TARGET_TEMP` and NTC values in Section 1
+3. Wire a button between **GP17** and **GND**
+4. First run starts in RUN mode with default PID gains
+5. Short-press the button to enter CALIBRATE mode — let it run for a few minutes to find better gains
+6. Best gains are saved automatically; a reboot reloads them
+
+### v4 OLED Menu (Pico)
+1. Upload `pico_pid_v4_menu.py` (rename to `main.py`) and ensure `display_oled.py` is also on the Pico
+2. Set `TARGET_TEMP` and NTC values in Section 1
+3. Wire three buttons: **GP17** (SELECT), **GP18** (UP), **GP19** (DOWN) — each to GND
+4. Press SELECT to open the menu, UP/DOWN to change values, long-press SELECT to save and exit
+5. All changes take effect immediately; setpoint and gains persist across reboots
+
 ---
 
 ## Key Settings — v1 PID
@@ -168,6 +271,32 @@ Use a series resistor matching your NTC value (10k with 10k NTC, 100k with 100k 
 | `RL_EPSILON_MIN` | `0.05` | Minimum exploration rate |
 | `RL_SAVE_EVERY` | `200` | Save Q-table to flash every N steps |
 | `QTABLE_FILE` | `"qtable_v2.json"` | Flash file where learning is stored |
+
+## Key Settings — v3 Smart PID
+
+| Setting | Default | Description |
+|---|---|---|
+| `TARGET_TEMP` | `60.0` | Target temperature in °C |
+| `PIN_BUTTON` | `17` | GP pin for mode-toggle / reset button |
+| `CAL_DURATION_S` | `300` | Seconds before CALIBRATE auto-returns to RUN |
+| `SCORE_DEADBAND` | `1.0` | °C deadband used in oscillation counting |
+| `TUNE_STEP_RUN` | `0.03` | Gain adjustment step in RUN mode |
+| `TUNE_STEP_CAL` | `0.10` | Gain adjustment step in CALIBRATE mode |
+| `TUNE_INTERVAL_RUN` | `60` | Seconds between tune evaluations in RUN mode |
+| `TUNE_INTERVAL_CAL` | `20` | Seconds between tune evaluations in CALIBRATE mode |
+| `STATE_FILE` | `"pid_state.json"` | Flash file for best gains and mode |
+
+## Key Settings — v4 OLED Menu
+
+Inherits all v3 settings, plus:
+
+| Setting | Default | Description |
+|---|---|---|
+| `PIN_SELECT` | `17` | GP pin for SELECT button (menu open / next / save) |
+| `PIN_UP` | `18` | GP pin for UP button |
+| `PIN_DOWN` | `19` | GP pin for DOWN button |
+| `LONG_MS` | `1000` | Hold time (ms) to trigger long-press |
+| `REPEAT_MS` | `300` | Auto-repeat interval (ms) for UP/DOWN when held |
 
 ---
 
@@ -197,6 +326,7 @@ Same in both v1 and v2 — safety always overrides the controller.
 | SHUTDOWN | `SAFETY_HARD_MAX_C` | Emergency off, stays off until reboot |
 
 In v2 the agent also receives a **−10 reward** when safety triggers, so it learns to avoid overheating.
+In v3 and v4, a safety trigger also resets the performance score so bad gains are never saved as "best".
 
 ---
 
@@ -221,5 +351,5 @@ print(I2C(1, sda=Pin(14), scl=Pin(15)).scan())
 
 - MicroPython firmware on ESP32 or Pico
 - `onewire` + `ds18x20` — only if using DS18B20 (built into standard firmware)
-- `display_oled.py` — only if using OLED display (included in this repo)
-- No external libraries needed for v1 or v2
+- `display_oled.py` — required for v3 and v4; optional for v1/v2 (included in this repo)
+- No external libraries needed for any version
