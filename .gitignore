@@ -1,0 +1,16 @@
+# Runtime state files saved to Pico flash — not part of the project
+qtable_v2.json
+pid_state.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
