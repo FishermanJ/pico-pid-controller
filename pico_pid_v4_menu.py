@@ -104,6 +104,7 @@ IPS_BL_PIN    = -1          # set to backlight pin number if connected, else -1
 IPS_WIDTH     = 240
 IPS_HEIGHT    = 240
 IPS_SPI_ID    = 1           # SPI bus: 1 for Pico, 2 for ESP32
+IPS_INVERT    = False       # False = black bg (try first); True = if screen stays white
 
 
 # ============================================================
@@ -523,6 +524,7 @@ class Display:
                     width    = IPS_WIDTH,
                     height   = IPS_HEIGHT,
                     spi_id   = IPS_SPI_ID,
+                    invert   = IPS_INVERT,
                 )
                 print("[DISPLAY] IPS ready")
             except Exception as e:

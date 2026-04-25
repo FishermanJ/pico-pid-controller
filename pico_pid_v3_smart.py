@@ -116,7 +116,7 @@ LOOP_INTERVAL_MS  = 500
 LOG_EVERY_LOOPS   = 10
 
 # ── Display ───────────────────────────────────────────────────
-DISPLAY_TYPE = "OLED"       # "OLED" | "IPS" | "NONE"
+DISPLAY_TYPE = "IPS"       # "OLED" | "IPS" | "NONE"
 
 # OLED settings (SSD1306 I2C — used when DISPLAY_TYPE = "OLED")
 OLED_SDA_PIN  = 14
@@ -134,6 +134,7 @@ IPS_BL_PIN    = -1          # set to backlight pin number if connected, else -1
 IPS_WIDTH     = 240
 IPS_HEIGHT    = 240
 IPS_SPI_ID    = 1           # SPI bus: 1 for Pico, 2 for ESP32
+IPS_INVERT    = False       # False = black bg (try first); True = if screen stays white
 
 DISPLAY_UPDATE_EVERY = 4
 
@@ -179,6 +180,7 @@ elif DISPLAY_TYPE == "IPS":
             width    = IPS_WIDTH,
             height   = IPS_HEIGHT,
             spi_id   = IPS_SPI_ID,
+            invert   = IPS_INVERT,
         )
         print("[DISPLAY] IPS ready")
     except Exception as e:
