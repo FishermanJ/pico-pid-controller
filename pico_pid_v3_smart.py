@@ -40,8 +40,13 @@
 #  Button:
 #    GP17 ──── push button ──── GND   (internal pull-up, no resistor needed)
 #
-#  OLED (optional):
+#  OLED (set DISPLAY_TYPE = "OLED"):
 #    GP14 ── SDA  |  GP15 ── SCL
+#
+#  IPS display (set DISPLAY_TYPE = "IPS"):
+#    GP10 ── SCK    GP11 ── MOSI   GP13 ── CS
+#    GP8  ── DC     GP9  ── RST    (BL optional)
+#    Requires display_ips.py on the Pico filesystem.
 #
 # ============================================================
 
@@ -111,10 +116,25 @@ LOOP_INTERVAL_MS  = 500
 LOG_EVERY_LOOPS   = 10
 
 # ── Display ───────────────────────────────────────────────────
-DISPLAY_TYPE = "OLED"       # "OLED" | "NONE"
+DISPLAY_TYPE = "OLED"       # "OLED" | "IPS" | "NONE"
+
+# OLED settings (SSD1306 I2C — used when DISPLAY_TYPE = "OLED")
 OLED_SDA_PIN  = 14
 OLED_SCL_PIN  = 15
 OLED_I2C_ADDR = 0x3C
+
+# IPS settings (ST7789 SPI — used when DISPLAY_TYPE = "IPS")
+# Pico default: SPI1 on GP10/GP11 with CS=GP13, DC=GP8, RST=GP9
+IPS_SCK_PIN   = 10
+IPS_MOSI_PIN  = 11
+IPS_CS_PIN    = 13
+IPS_DC_PIN    = 8
+IPS_RST_PIN   = 9
+IPS_BL_PIN    = -1          # set to backlight pin number if connected, else -1
+IPS_WIDTH     = 240
+IPS_HEIGHT    = 240
+IPS_SPI_ID    = 1           # SPI bus: 1 for Pico, 2 for ESP32
+
 DISPLAY_UPDATE_EVERY = 4
 
 # ── Serial ────────────────────────────────────────────────────
@@ -134,12 +154,35 @@ def _log(line):
         sys.stdout.write(line + "\r\n")
 
 
-_display_class = None
+_display_obj = None
 if DISPLAY_TYPE == "OLED":
     try:
-        from display_oled import OLEDDisplay as _display_class
-    except ImportError:
-        print("[DISPLAY] display_oled.py not found — running without display")
+        from display_oled import OLEDDisplay as _OLEDDisplay
+        _display_obj = _OLEDDisplay(
+            sda_pin  = OLED_SDA_PIN,
+            scl_pin  = OLED_SCL_PIN,
+            i2c_addr = OLED_I2C_ADDR,
+        )
+        print("[DISPLAY] OLED ready")
+    except Exception as e:
+        print("[DISPLAY] OLED failed:", e)
+elif DISPLAY_TYPE == "IPS":
+    try:
+        from display_ips import IPSDisplay as _IPSDisplay
+        _display_obj = _IPSDisplay(
+            sck_pin  = IPS_SCK_PIN,
+            mosi_pin = IPS_MOSI_PIN,
+            cs_pin   = IPS_CS_PIN,
+            dc_pin   = IPS_DC_PIN,
+            rst_pin  = IPS_RST_PIN,
+            bl_pin   = IPS_BL_PIN,
+            width    = IPS_WIDTH,
+            height   = IPS_HEIGHT,
+            spi_id   = IPS_SPI_ID,
+        )
+        print("[DISPLAY] IPS ready")
+    except Exception as e:
+        print("[DISPLAY] IPS failed:", e)
 
 
 # ============================================================
@@ -645,16 +688,7 @@ def main():
 
     led = StatusLED(PIN_LED)
 
-    display = None
-    if _display_class is not None:
-        try:
-            display = _display_class(
-                sda_pin  = OLED_SDA_PIN,
-                scl_pin  = OLED_SCL_PIN,
-                i2c_addr = OLED_I2C_ADDR,
-            )
-        except Exception as e:
-            print("[DISPLAY] Init failed:", e)
+    display = _display_obj
 
     # ── Mode setup ────────────────────────────────────────────
     mode = state.mode

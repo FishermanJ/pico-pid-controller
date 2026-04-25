@@ -24,8 +24,13 @@
 #    GP14 ── OLED SDA       GP18 ── UP button     ── GND
 #    GP15 ── OLED SCL       GP19 ── DOWN button   ── GND
 #
+#  IPS display (set DISPLAY_TYPE = "IPS" in settings):
+#    GP10 ── SCK    GP11 ── MOSI   GP13 ── CS
+#    GP8  ── DC     GP9  ── RST    (BL optional)
+#    Requires display_ips.py on the Pico filesystem.
+#
 #  All buttons use internal pull-up — wire directly to GND.
-#  Self-contained: SSD1306 OLED driver is included below.
+#  OLED driver is self-contained below; IPS requires display_ips.py.
 #
 # ============================================================
 
@@ -79,7 +84,26 @@ STATE_FILE = "pid_state.json"
 LOOP_INTERVAL_MS = 500
 LOG_EVERY_LOOPS  = 10
 SERIAL_PRINT     = True
-OLED_I2C_ADDR    = 0x3C
+
+# ── Display ───────────────────────────────────────────────────
+DISPLAY_TYPE = "OLED"       # "OLED" | "IPS" | "NONE"
+
+# OLED settings (SSD1306 I2C — used when DISPLAY_TYPE = "OLED")
+OLED_SDA_PIN  = 14
+OLED_SCL_PIN  = 15
+OLED_I2C_ADDR = 0x3C
+
+# IPS settings (ST7789 SPI — used when DISPLAY_TYPE = "IPS")
+# Pico default: SPI1 on GP10/GP11 with CS=GP13, DC=GP8, RST=GP9
+IPS_SCK_PIN   = 10
+IPS_MOSI_PIN  = 11
+IPS_CS_PIN    = 13
+IPS_DC_PIN    = 8
+IPS_RST_PIN   = 9
+IPS_BL_PIN    = -1          # set to backlight pin number if connected, else -1
+IPS_WIDTH     = 240
+IPS_HEIGHT    = 240
+IPS_SPI_ID    = 1           # SPI bus: 1 for Pico, 2 for ESP32
 
 
 # ============================================================
@@ -461,42 +485,82 @@ class Buttons:
 
 class Display:
     """
-    Manages both normal PID status screen and the settings menu.
+    Unified display wrapper — routes to OLED (SSD1306) or IPS (ST7789)
+    depending on DISPLAY_TYPE.
 
-    Menu layout (128×64, 8 px font):
-      y= 0  header row  "─── SETTINGS ───"
-      y= 8  item 0  MODE
-      y=16  item 1  TEMP
-      y=24  item 2  Kp
-      y=32  item 3  Ki
-      y=40  item 4  Kd
-      y=52  hint row  "SEL=next  LONG=save"
+    OLED menu layout (128×64, 8-px font):
+      y= 0  "--- SETTINGS ---"
+      y= 8  item 0  (inverted when selected)
+      ...
+      y=56  hint row
 
-    The selected item is drawn with inverted colours.
+    IPS menu: full-color 240×240 screen rendered via IPSDisplay.menu_screen().
     """
 
     _BADGE = {"OK":" OK ","WARNING":"WARN","CUTOFF":"CUT!","SHUTDOWN":"STOP"}
 
-    def __init__(self, sda=14, scl=15, addr=0x3C):
-        try:
-            self._o = make_oled(sda, scl, addr)
-            print("[OLED] Ready")
-        except Exception as e:
-            print("[OLED] Failed:", e)
-            self._o = None
+    def __init__(self):
+        self._oled = None
+        self._ips  = None
+
+        if DISPLAY_TYPE == "OLED":
+            try:
+                self._oled = make_oled(OLED_SDA_PIN, OLED_SCL_PIN, OLED_I2C_ADDR)
+                print("[DISPLAY] OLED ready")
+            except Exception as e:
+                print("[DISPLAY] OLED failed:", e)
+
+        elif DISPLAY_TYPE == "IPS":
+            try:
+                from display_ips import IPSDisplay
+                self._ips = IPSDisplay(
+                    sck_pin  = IPS_SCK_PIN,
+                    mosi_pin = IPS_MOSI_PIN,
+                    cs_pin   = IPS_CS_PIN,
+                    dc_pin   = IPS_DC_PIN,
+                    rst_pin  = IPS_RST_PIN,
+                    bl_pin   = IPS_BL_PIN,
+                    width    = IPS_WIDTH,
+                    height   = IPS_HEIGHT,
+                    spi_id   = IPS_SPI_ID,
+                )
+                print("[DISPLAY] IPS ready")
+            except Exception as e:
+                print("[DISPLAY] IPS failed:", e)
 
     def _ok(self):
-        return self._o is not None
+        return self._oled is not None or self._ips is not None
 
     # ── PID status screen ─────────────────────────────────────
-    def pid_screen(self, temp, sp, duty, kp, ki, kd, mode, safety, score, tune_act):
+    def pid_screen(self, temp, sp, duty, kp, ki, kd, mode, safety, score,
+                   tune_act, p_term=0., i_term=0., d_term=0.,
+                   tune_count=0, loop_count=0):
         if not self._ok():  return
-        o = self._o;  o.fill(0)
-        err = sp - (temp if temp is not None else sp)
 
+        if self._ips is not None:
+            self._ips.update(
+                temperature  = temp,
+                setpoint     = sp,
+                pid_output   = duty,
+                p_term       = p_term,
+                i_term       = i_term,
+                d_term       = d_term,
+                kp           = kp,
+                ki           = ki,
+                kd           = kd,
+                safety_state = safety,
+                tune_count   = tune_count,
+                last_action  = mode[:3] + " " + tune_act,
+                loop_count   = loop_count,
+            )
+            return
+
+        # ── OLED ──────────────────────────────────────────────
+        o = self._oled;  o.fill(0)
+        err   = sp - (temp if temp is not None else sp)
         t_str = "{:.1f}C".format(temp) if temp else "---.-C"
-        o.text("T:{} SP:{:.1f}".format(t_str, sp),  0,  0)
         badge = self._BADGE.get(safety, "????")
+        o.text("T:{} SP:{:.1f}".format(t_str, sp),  0,  0)
         o.text("Out:{:.0f}% [{}]".format(duty, badge),  0,  9)
         o.text("Err:{:+.2f}C".format(err),              0, 18)
         o.text("Kp:{:.2f} Ki:{:.4f}".format(kp, ki),    0, 27)
@@ -509,19 +573,23 @@ class Display:
     # ── Menu screen ───────────────────────────────────────────
     def menu_screen(self, items, sel):
         """
-        items: list of dicts with keys 'label', 'fmt' (formatted value string)
-        sel:   index of highlighted item (0 = first item row)
+        items: list of dicts with keys 'label', 'fmt'
+        sel:   index of highlighted item
         """
         if not self._ok():  return
-        o = self._o;  o.fill(0)
+
+        if self._ips is not None:
+            self._ips.menu_screen(items, sel)
+            return
+
+        # ── OLED ──────────────────────────────────────────────
+        o = self._oled;  o.fill(0)
         o.text("--- SETTINGS ---",  0,  0)
-
         for i, item in enumerate(items):
-            y      = 8 + i * 8
-            line   = "{} {}".format(item['label'], item['fmt'])
-            line   = (line + " " * 16)[:16]   # pad / truncate to 16 chars
+            y    = 8 + i * 8
+            line = "{} {}".format(item['label'], item['fmt'])
+            line = (line + " " * 16)[:16]
             o.row(y, line, invert=(i == sel))
-
         o.text("SEL=next LP=save", 0, 56)
         o.show()
 
@@ -672,7 +740,7 @@ def main():
     buttons = Buttons(PIN_SEL, PIN_UP, PIN_DN)
     safety  = SafetySystem(TARGET_TEMP)
     led     = StatusLED(PIN_LED)
-    display = Display(sda=14, scl=15, addr=OLED_I2C_ADDR)
+    display = Display()
 
     has_best = state.best_score < float('inf')
     kp0 = state.best_kp if has_best else KP_DEFAULT
@@ -815,7 +883,10 @@ def main():
             else:
                 display.pid_screen(temperature, pid.setpoint, output.duty,
                                    pid.kp, pid.ki, pid.kd, mode,
-                                   safety.state, live_score, tuner.last)
+                                   safety.state, live_score, tuner.last,
+                                   p_term=pid.last_p, i_term=pid.last_i,
+                                   d_term=pid.last_d, tune_count=tuner.count,
+                                   loop_count=loop_count)
 
         # ── Serial log ────────────────────────────────────────
         if loop_count % LOG_EVERY_LOOPS == 0:
