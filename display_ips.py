@@ -81,6 +81,31 @@ _STATE_LABEL = {
 }
 
 
+# ── ST7789 command bytes (module-level so subclasses can access via self) ──
+_SWRESET    = const(0x01)
+_SLPOUT     = const(0x11)
+_COLMOD     = const(0x3A)
+_MADCTL     = const(0x36)
+_PORCTRL    = const(0xB2)
+_GCTRL      = const(0xB7)
+_VCOMS      = const(0xBB)
+_LCMCTRL    = const(0xC0)
+_VDVVRHEN   = const(0xC2)
+_VRHS       = const(0xC3)
+_VDVS       = const(0xC4)
+_FRCTRL2    = const(0xC6)
+_PWRCTRL    = const(0xD0)
+_PVGAMCTRL  = const(0xE0)
+_NVGAMCTRL  = const(0xE1)
+_INVON      = const(0x21)
+_INVOFF     = const(0x20)
+_NORON      = const(0x13)
+_DISPON     = const(0x29)
+_CASET      = const(0x2A)
+_RASET      = const(0x2B)
+_RAMWR      = const(0x2C)
+
+
 # ============================================================
 #  Low-level ST7789 SPI driver
 # ============================================================
@@ -94,29 +119,6 @@ class ST7789:
     """
 
     STRIPE_H = 32   # stripe buffer height in rows — tune down if RAM is tight
-
-    # ── ST7789 command bytes ──────────────────────────────────
-    _SWRESET = const(0x01)
-    _SLPOUT  = const(0x11)
-    _COLMOD  = const(0x3A)
-    _MADCTL  = const(0x36)
-    _PORCTRL = const(0xB2)
-    _GCTRL   = const(0xB7)
-    _VCOMS   = const(0xBB)
-    _LCMCTRL = const(0xC0)
-    _VDVVRHEN= const(0xC2)
-    _VRHS    = const(0xC3)
-    _VDVS    = const(0xC4)
-    _FRCTRL2 = const(0xC6)
-    _PWRCTRL = const(0xD0)
-    _PVGAMCTRL=const(0xE0)
-    _NVGAMCTRL=const(0xE1)
-    _INVON   = const(0x21)
-    _NORON   = const(0x13)
-    _DISPON  = const(0x29)
-    _CASET   = const(0x2A)
-    _RASET   = const(0x2B)
-    _RAMWR   = const(0x2C)
 
     def __init__(self, sck, mosi, cs, dc, rst,
                  bl=-1, width=240, height=240, spi_freq=40_000_000,
@@ -190,26 +192,26 @@ class ST7789:
 
         # Command sequence: (cmd, data_bytes_or_None, delay_ms)
         _SEQ = [
-            (self._SWRESET, None,                           150),
-            (self._SLPOUT,  None,                            10),
-            (self._COLMOD,  b'\x55',                         10),  # RGB565
-            (self._MADCTL,  b'\x00',                          0),  # normal orientation
-            (self._PORCTRL, b'\x0C\x0C\x00\x33\x33',         0),  # porch
-            (self._GCTRL,   b'\x35',                          0),  # gate
-            (self._VCOMS,   b'\x19',                          0),
-            (self._LCMCTRL, b'\x2C',                          0),
-            (self._VDVVRHEN,b'\x01',                          0),
-            (self._VRHS,    b'\x12',                          0),
-            (self._VDVS,    b'\x20',                          0),
-            (self._FRCTRL2, b'\x0F',                          0),  # 60 Hz
-            (self._PWRCTRL, b'\xA4\xA1',                      0),
-            (self._PVGAMCTRL,
+            (_SWRESET, None,                           150),
+            (_SLPOUT,  None,                            10),
+            (_COLMOD,  b'\x55',                         10),  # RGB565
+            (_MADCTL,  b'\x00',                          0),  # normal orientation
+            (_PORCTRL, b'\x0C\x0C\x00\x33\x33',         0),  # porch
+            (_GCTRL,   b'\x35',                          0),  # gate
+            (_VCOMS,   b'\x19',                          0),
+            (_LCMCTRL, b'\x2C',                          0),
+            (_VDVVRHEN,b'\x01',                          0),
+            (_VRHS,    b'\x12',                          0),
+            (_VDVS,    b'\x20',                          0),
+            (_FRCTRL2, b'\x0F',                          0),  # 60 Hz
+            (_PWRCTRL, b'\xA4\xA1',                      0),
+            (_PVGAMCTRL,
              b'\xD0\x04\x0D\x11\x13\x2B\x3F\x54\x4C\x18\x0D\x0B\x1F\x23', 0),
-            (self._NVGAMCTRL,
+            (_NVGAMCTRL,
              b'\xD0\x04\x0C\x11\x13\x2C\x3F\x44\x51\x2F\x1F\x1F\x20\x23', 0),
-            (self._INVON,   None,                             0),  # inversion on
-            (self._NORON,   None,                             0),  # normal mode
-            (self._DISPON,  None,                            10),  # display on
+            (_INVON,   None,                             0),  # inversion on — change to _INVOFF if screen is white
+            (_NORON,   None,                             0),  # normal mode
+            (_DISPON,  None,                            10),  # display on
         ]
 
         for cmd, data, delay in _SEQ:
@@ -248,13 +250,13 @@ class ST7789:
         x0 += self._x_off;  x1 += self._x_off
         y0 += self._y_off;  y1 += self._y_off
 
-        self._cmd(self._CASET)
+        self._cmd(_CASET)
         self._data(struct.pack('>HH', x0, x1))   # column start / end
 
-        self._cmd(self._RASET)
+        self._cmd(_RASET)
         self._data(struct.pack('>HH', y0, y1))   # row start / end
 
-        self._cmd(self._RAMWR)                    # begin pixel write
+        self._cmd(_RAMWR)                         # begin pixel write
 
     # ── Drawing primitives ────────────────────────────────────
     def fill_screen(self, color: int) -> None:
